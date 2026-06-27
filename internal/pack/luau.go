@@ -346,12 +346,19 @@ func emitImpl(b *strings.Builder, n *Instance) {
 				n.Name, d.Pos.Line, d.Pos.Col, d.Message)))
 		return
 	}
-	fmt.Fprintf(b, "i%d._impl = function(script, require)\n", n.id)
+	// The module body runs in an inner closure so `script`/`require` are upvalues,
+	// not parameters. Luau caps locals (registers) at 200 per function and params
+	// count toward that; a module with 199 top-level locals (e.g. jsdotlua's
+	// ReactFiberBeginWork.new) plus 2 params would overflow ("Out of local
+	// registers"). As upvalues they cost no registers in the body. The body's own
+	// `return` returns through the inner call; modules take no varargs, so nothing
+	// is lost.
+	fmt.Fprintf(b, "i%d._impl = function(script, require) return (function()\n", n.id)
 	b.WriteString(n.Source)
 	if !strings.HasSuffix(n.Source, "\n") {
 		b.WriteByte('\n')
 	}
-	b.WriteString("end\n")
+	b.WriteString("end)() end\n")
 }
 
 func resolveEntry(root *Instance, path string) *Instance {
