@@ -158,27 +158,96 @@ local function setParent(child, parent)
 	table.insert(parent._children, child)
 end
 local cache, loading = {}, {}
-local function rotorRequire(target)
+-- @self for a module: the package's source root — the child of the package
+-- folder (the folder directly under a node_modules "@scope") on the path down
+-- to the requiring module. Lets pesde-style packages (@rbxts/ripple) use @self/x.
+-- Read .Parent without triggering __index (which, for a nil/root Parent, would
+-- recurse into findFirstChild/realOf forever). Parent is a plain rawset field.
+local function parentOf(inst)
+	return rawget(inst, "Parent")
+end
+local function pkgSelf(from)
+	local cur, childOfPkg = from, from
+	local p = parentOf(cur)
+	while p ~= nil and string.sub(p.Name, 1, 1) ~= "@" do
+		childOfPkg = cur
+		cur = p
+		p = parentOf(cur)
+	end
+	return childOfPkg
+end
+-- Resolve a Luau require-by-string path (./x, ../x, nested a/b, @self/x) to a
+-- virtual instance, relative to the requiring ModuleScript (from). Mirrors Luau
+-- string-require directory rules: an init-style module (one with children) is
+-- its own directory; a leaf module's directory is its parent.
+local function resolvePath(from, path)
+	local segs = {}
+	for s in string.gmatch(path, "[^/]+") do
+		segs[#segs + 1] = s
+	end
+	local base, i
+	if segs[1] == "@self" then
+		base, i = pkgSelf(from), 2
+	else
+		base = (#from._children > 0) and from or parentOf(from)
+		i = 1
+	end
+	for j = i, #segs do
+		local s = segs[j]
+		if s == ".." then
+			base = base and parentOf(base)
+		elseif s ~= "." then
+			base = base and virtualChild(base, s)
+		end
+		if base == nil then
+			return nil
+		end
+	end
+	return base
+end
+local loadModule, moduleRequire
+loadModule = function(target)
+	local id = target._id
+	local c = cache[id]
+	if c ~= nil then
+		return c.value
+	end
+	if loading[id] then
+		error("Requested module was required recursively", 2)
+	end
+	loading[id] = true
+	local value = target._impl(target, function(p)
+		return moduleRequire(target, p)
+	end)
+	loading[id] = nil
+	cache[id] = { value = value }
+	return value
+end
+-- The require seen by a module's closure. String paths resolve against the
+-- reconstructed tree relative to the requiring script; instance requires run the
+-- memoized closure; anything else (real instance/service paths, missing modules)
+-- falls back to the host require.
+moduleRequire = function(from, target)
+	if type(target) == "string" then
+		local inst = from ~= nil and resolvePath(from, target) or nil
+		if inst ~= nil and inst.ClassName == "ModuleScript" then
+			return loadModule(inst)
+		end
+		return realRequire(target)
+	end
 	if type(target) == "table" and rawget(target, "_id") ~= nil and target.ClassName == "ModuleScript" then
-		local id = target._id
-		local c = cache[id]
-		if c ~= nil then
-			return c.value
-		end
-		if loading[id] then
-			error("Requested module was required recursively", 2)
-		end
-		loading[id] = true
-		local value = target._impl(target, rotorRequire)
-		loading[id] = nil
-		cache[id] = { value = value }
-		return value
+		return loadModule(target)
 	end
 	return realRequire(target)
 end
+local function rotorRequire(target)
+	return moduleRequire(nil, target)
+end
 local function runScripts(inst)
 	if inst.ClassName == "Script" or inst.ClassName == "LocalScript" then
-		inst._impl(inst, rotorRequire)
+		inst._impl(inst, function(p)
+			return moduleRequire(inst, p)
+		end)
 	end
 	for _, c in ipairs(inst._children) do
 		runScripts(c)
@@ -259,8 +328,10 @@ func EmitLuau(roots []*Instance, entry string) (string, error) {
 	case entryInst == nil:
 		fmt.Fprintf(&b, "runScripts(i%d)\nreturn i%d\n", root.id, root.id)
 	case entryInst.ClassName == "Script" || entryInst.ClassName == "LocalScript":
-		// Scripts aren't requirable; run the body closure directly.
-		fmt.Fprintf(&b, "return i%d._impl(i%d, rotorRequire)\n", entryInst.id, entryInst.id)
+		// Scripts aren't requirable; run the body closure directly, with a require
+		// bound to the script so its string requires resolve.
+		fmt.Fprintf(&b, "return i%d._impl(i%d, function(p) return moduleRequire(i%d, p) end)\n",
+			entryInst.id, entryInst.id, entryInst.id)
 	default:
 		fmt.Fprintf(&b, "return rotorRequire(i%d)\n", entryInst.id)
 	}

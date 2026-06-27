@@ -228,6 +228,46 @@ func TestPackVirtualGameResolvesUnderLune(t *testing.T) {
 	}
 }
 
+// TestPackStringRequiresResolveUnderLune proves Luau require-by-string paths
+// (./x, ../x, nested a/b, @self/x) used by pesde-style packages (e.g. @rbxts/ripple,
+// @rbxts/react-charm) resolve against the reconstructed tree, mirroring a package's
+// real shape: <scope>/<pkg>/src (init module) with submodules under it.
+func TestPackStringRequiresResolveUnderLune(t *testing.T) {
+	lune, err := exec.LookPath("lune")
+	if err != nil {
+		t.Skip("lune not on PATH")
+	}
+	leaf := &Instance{ClassName: "ModuleScript", Name: "leaf", Source: `return "LEAF"`}
+	h := &Instance{ClassName: "ModuleScript", Name: "h", Source: `return require("../leaf") .. "HELP"`}
+	util := &Instance{ClassName: "Folder", Name: "util", Children: []*Instance{h}}
+	// src is the package's init module (has children), so "./x" is a child and
+	// "@self" is src itself.
+	src := &Instance{ClassName: "ModuleScript", Name: "src",
+		Source: `return require("./util/h") .. "|" .. require("@self/leaf")`,
+		Children: []*Instance{leaf, util}}
+	pkg := &Instance{ClassName: "Folder", Name: "ripple", Children: []*Instance{src}}
+	scope := &Instance{ClassName: "Folder", Name: "@rbxts", Children: []*Instance{pkg}}
+	nm := &Instance{ClassName: "Folder", Name: "node_modules", Children: []*Instance{scope}}
+	root := &Instance{ClassName: "Folder", Name: "app", Children: []*Instance{nm}}
+
+	out, err := EmitLuau([]*Instance{root}, "app.node_modules.@rbxts.ripple.src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "bundle.luau"), out)
+	writeFile(t, filepath.Join(dir, "run.luau"), "print(require(\"./bundle\"))\n")
+	cmd := exec.Command(lune, "run", "run.luau")
+	cmd.Dir = dir
+	got, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("lune run failed: %v\n%s\n--- bundle ---\n%s", err, got, out)
+	}
+	if !strings.Contains(string(got), "LEAFHELP|LEAF") {
+		t.Fatalf("string requires did not resolve: got %q, want LEAFHELP|LEAF\n--- bundle ---\n%s", got, out)
+	}
+}
+
 // TestPackScriptEntryRunsViaClosure verifies a Script/LocalScript --entry is invoked via
 // its closure (scripts are not requirable) rather than passed to rotorRequire.
 func TestPackScriptEntryRunsViaClosure(t *testing.T) {
