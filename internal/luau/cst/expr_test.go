@@ -35,6 +35,9 @@ func TestExprRoundtrip(t *testing.T) {
 		"-x ^ 2", "a .. b .. c", "1 < 2", "a == b", "a ~= b and not c",
 		// if-then-else expression
 		"if a then b else c", "if a then b elseif c then d else e",
+		// if-then-else as a binary/unary operand (React uses `... or if x then y else z`)
+		"a or if c then d else e", "x and if a then b else c",
+		"a or b or if c then d else e", "not if a then b else c",
 		// tables
 		"{}", "{ }", "{1, 2, 3}", "{a = 1}", "{[k] = v}",
 		"{a = 1, [b] = 2; 3}", "{a = 1,}", "{1; 2; 3}",

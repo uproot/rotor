@@ -66,6 +66,12 @@ func (c *cursor) parseBinary(minPrec int) Node {
 }
 
 func (c *cursor) parseUnary() Node {
+	// An if-then-else expression may appear as any operand, not just at the top of
+	// an expression (e.g. `a or if cond then x else y`), so handle it here too —
+	// parseBinary reaches every operand through parseUnary.
+	if c.atKeyword("if") {
+		return c.parseIfExpr()
+	}
 	if c.isUnaryOp() {
 		op := c.next()
 		operand := c.parseBinary(unaryPrec)
