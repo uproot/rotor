@@ -243,7 +243,7 @@ func TestPackStringRequiresResolveUnderLune(t *testing.T) {
 	// src is the package's init module (has children), so "./x" is a child and
 	// "@self" is src itself.
 	src := &Instance{ClassName: "ModuleScript", Name: "src",
-		Source: `return require("./util/h") .. "|" .. require("@self/leaf")`,
+		Source:   `return require("./util/h") .. "|" .. require("@self/leaf")`,
 		Children: []*Instance{leaf, util}}
 	pkg := &Instance{ClassName: "Folder", Name: "ripple", Children: []*Instance{src}}
 	scope := &Instance{ClassName: "Folder", Name: "@rbxts", Children: []*Instance{pkg}}
