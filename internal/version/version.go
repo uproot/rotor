@@ -8,4 +8,4 @@ package version
 // Bumping this constant is part of cutting a release: the release workflow
 // refuses to publish a tag that doesn't match it (tag `vX.Y.Z` must equal
 // "v" + Version).
-const Version = "2.2.1"
+const Version = "2.3.0"
